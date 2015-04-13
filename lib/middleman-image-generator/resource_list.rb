@@ -26,7 +26,6 @@ module Middleman
 
       def modified_resources
         @resources.map do |resource|
-          puts resource.destination_path
           if resource_up_to_date?(resource)
             Middleman::Sitemap::Resource.new(
               app.sitemap,

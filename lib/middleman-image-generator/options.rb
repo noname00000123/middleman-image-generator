@@ -4,17 +4,20 @@ module Middleman
     class Options
 
       OPTIONS = {
+        # Write new source images to a manifest
         manifest: true,
-
+        # Create double sized images for retina displays
+        retina_versions: true,
+        # Accepted image source types
         filetypes: [:jpg, :jpeg, :png, :tiff],
-
-        namespaces: ["**"],
-
+        # An array of directories containing source images
+        sources: ["**"],
+        # Define version parameters and settings to control quality of output
         versions: {
-          sml: {quality: 'Q=80', dimensions: '500'},
-          med: {quality: 'Q=80', dimensions: '750'},
-          lrg: {quality: 'Q=100', dimensions: '1000'}
-        }
+          sml: {quality: 'Q=80', dims: '500'},
+          med: {quality: 'Q=80', dims: '750'},
+          lrg: {quality: 'Q=100', dims: '1000'}
+        },
       }
 
       attr_accessor *OPTIONS.keys.map(&:to_sym)
