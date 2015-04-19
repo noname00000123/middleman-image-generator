@@ -17,15 +17,15 @@ module Middleman
         write(dump(build(new_resources)))
       end
 
-      def resource(key)
-        resources[key.to_s]
-      end
+      # def resource(key)
+      #   resources[key.to_s]
+      # end
 
       private
 
-      def resources
-        @resources ||= load(path)
-      end
+      # def resources
+      #   @resources ||= load(path)
+      # end
 
       def dump(source)
         YAML.dump(source)
@@ -35,11 +35,21 @@ module Middleman
         YAML.load(File.read(path))
       end
 
+      # Combine new_files with current state
+      # TODO Would rather append than rewrite the entire file
       def build(resources)
-        resources.inject({}) do |new_manifest, resource|
-          new_manifest[resource.to_s] = File.mtime(resource)
-          new_manifest
+        current = YAML.load_file(path)
+
+        resources.each do |resource|
+          item = {}
+          item['path'] = resource
+          item['modified'] = File.mtime(resource).to_s
+          item['processed'] = Time.now.to_s
+
+          current << item
         end
+
+        current
       end
 
       def write(manifest)
