@@ -3,6 +3,7 @@ require 'find'
 require 'json'
 require 'middleman-image-generator/resource_collector'
 
+# Enqueue batches and process
 module Middleman
   module ImageGenerator
     class Generator
@@ -11,7 +12,7 @@ module Middleman
       attr_reader :app, :builder, :options
 
       def self.generate!(app, builder, options)
-        new(app, builder, options).process_versions
+        new(app, builder, options).process_queue
       end
 
       def initialize(app, builder, options)
@@ -22,31 +23,14 @@ module Middleman
         @images_dir = File.join(app.source_dir, app.images_dir)
 
         @content_types = options.sources.map{|source| source[:type]}
-      end
 
-      def process_versions
-        batch = write_json(prepare_batch_paramaters)
-
-        # Generate enlargements when required
-        # options.sources.select{|item| item[:enlargements].present?}.each do |item|
-        #   manufacture_dzi(
-        #       input_path,
-        #       input_basename,
-        #       File.expand_path(item[:enlargements][:path])
-        #   )
-        # end
-
-        # Generate resized lossy compressed image files according to version parameters
-        manufacture(batch)
-
-        update_manifest
-
-        # TODO no longer necessary to add files to the sitemap now that they are put to source before_build
-        # manipulate_resource_list(new_resources)
+        # Store batch_parameters in an array so they are accessible to all methods
+        @batch_parameters = []
       end
 
       def prepare_batch_paramaters
-        batch_parameters = []
+        # Clear previous iteration of array
+        @batch_parameters = []
 
         @content_types.each do |type|
           # Collect source files, if active generate required versions
@@ -56,36 +40,65 @@ module Middleman
 
             output_path = output_path(input_path)
 
+            # TODO this is probably not the appropriate place to do this,
+            # but I can't think of a better way to pass output_path out to check the dir exists
+            ensure_dir_exists(output_path)
+
             if output_prefix(type).length > 1
               output_basename = output_prefix(type).select{|item| item[:id].to_i == input_basename.to_i}.first[:title]
             else
               output_basename = output_prefix(type)[0][:title]
             end
 
-            # There's an implied use case for each version.
-            # Each use case will be formatted to suit different display conditions,
+            # There's an implied display type for each version.
+            # Each display type will be formatted to suit different display conditions,
             # ie. a thumbnail might be used when displaying many images on an index page.
             # Thumbnails must then be small. We will set the image generator to produce versions to suit these conditions
-            options.versions.each_with_index do |use_case, index|
-              # Store the use case in a variable, it may be used in the output filename
-              $use_case = use_case.keys[0].to_s
+            options.display_types.each_with_index do |display_type, index|
+              # Store the display type in a variable, it may be used in the output filename
+              # $display_type = display_type.keys[0].to_s
 
-              # A use case will have its own versions
-              $versions = []
-              $index    = index
+              # A display type will have its own versions
+              $output_parameters = []
             end
 
             input  = {path: input_path, basename: input_basename}
-            output = versions($index, output_path, output_basename, $versions).flatten
+            output = versions(output_path, output_basename, $output_parameters)
 
             batch = []
             batch << [input: input, output: output]
 
-            batch_parameters << batch.flatten
+            @batch_parameters << batch.flatten
           end
         end
 
-        batch_parameters
+        @batch_parameters.flatten
+      end
+
+      def process_queue
+        queue = write_queue(prepare_batch_paramaters)
+
+        # Generate resized lossy compressed image files according to version parameters
+        #manufacture(queue)
+
+        # Generate enlargements when required
+        # options.sources.select{|item| item[:enlargements].present?}.each do |item|
+        #   collect_specific(item[:type]).each do |file|
+        #     input_path      = file
+        #     input_basename  = File.basename(input_path, File.extname(input_path))
+        #
+        #     manufacture_dzi(
+        #         input_path,
+        #         input_basename,
+        #         File.expand_path(item[:enlargements][:path])
+        #     )
+        #   end
+        # end
+
+        update_manifest
+
+        # TODO no longer necessary to add files to the sitemap now that they are put to source before_build
+        # manipulate_resource_list(new_resources)
       end
 
       private
@@ -147,55 +160,74 @@ module Middleman
         options.sources.select{|item| item[:type] == type}.first[:filenames]
       end
 
-      def ensure_enlargements_dir_exists(output_dir)
-        # Ensure there is a directory to receive the enlargements
+      # Ensure there is a directory to receive versions
+      def ensure_dir_exists(output_dir)
         unless File.directory?(output_dir)
           FileUtils.mkdir_p(output_dir)
         end
       end
 
-      # Revised. Arrange per version paramaters, filenames and dimensions
-      def versions(index, output_path, output_basename, array)
-        options.versions[index].map do |version|
-          version     = version[1]
-          sizes       = version[:sizes]
-          settings    = version[:settings]
+      # Revised. Marshall batch paramaters, filenames and dimensions for each display_type
+      def versions(output_path, output_basename, output_parameters)
+        output = []
 
-          # Populate versions array with sizes
-          sizes.each do |size|
-            q = size[:quality]
-            min = size[:min_dimension]
+        options.display_types.each do |display_type|
+          versions_per_display_type = []
 
-            array << {
-                path: output_path,
-                basename: [output_basename, "q#{q}", "w#{min}"].join('_'),
-                use_case: $use_case,
-                quality: q,
-                dim: min,
-            }
+          versions = display_type.map do |item|
+            sizes = []
 
-            # Multiply by a factor of two for inclusion
-            # of a double sized version for hi-dpi screens
-            if options.retina_versions
-              double = min.to_i * 2
+            # Populate versions array with sizes
+            item[1][:sizes].each do |size|
+              q = size[:quality]
+              min = size[:min_dimension]
 
-              array << {
+              sizes << {
                   path: output_path,
-                  basename: [output_basename, "q#{q}", "w#{double}_x2"].join('_'),
-                  use_case: $use_case,
+                  basename: [
+                    output_basename,
+                    item[0], # $display_type,
+                    "q#{q}",
+                    "w#{min}"
+                  ].join('_'),
+                  #display_type: item[0], #$display_type,
                   quality: q,
-                  dim: double,
+                  dim: min,
               }
+
+              # Multiply by a factor of two for inclusion
+              # of a double sized version for hi-dpi screens
+              if options.retina_versions && item[0].to_s != 'indexable'
+                double = min.to_i * 2
+
+                sizes << {
+                    path: output_path,
+                    basename: [
+                      output_basename,
+                      item[0], #$display_type,
+                      "q#{q}",
+                      "w#{double}_x2"
+                    ].join('_'),
+                    #display_type: item[0], #$display_type,
+                    quality: q,
+                    dim: double,
+                }
+              end
             end
+
+            output_parameters << [sizes, item[1][:settings]]
           end
 
-          # Return the settings and version parameters
-          # unique to this use case in an array
-          [array, settings]
+          versions_per_display_type << versions[0]
+          output << versions_per_display_type[0]
         end
+
+        # Return the settings and version parameters
+        # unique to this display type in an array
+        output
       end
 
-      def write_json(collection)
+      def write_queue(collection)
         tmp_dir      = File.join(Dir.pwd, 'source/assets/images/tmp')
         tmp_filename = "#{tmp_dir}/batch#{Time.now.to_i}.json"
 
@@ -203,34 +235,34 @@ module Middleman
         # Write json to tmp_file
         File.open(tmp_filename, "w") do |file|
           file.write(collection.to_json)
+          file.close
         end
 
-        # return filename
         tmp_filename
       end
 
       # For each of the required image types generate resized versions.
       # Add Copyright metadata and ICC profile http://www.color.org/srgbprofiles.xalter
-      def manufacture(batch)
-        # TODO pay attention to the location of middleman-image-generator and also node.js installation as this arrangement may change.
-        # It seems, to run node, we have to return to user home
-        # We then have to point to resizer wherever it might be
-        path         = File.expand_path("..", Dir.pwd)
+      # execute lovell/sharp for processing, provides friendlier interface than libvips itself
+      # node.js required
+      def manufacture(queue)
+        # TODO consider using Tempfile class
+        path  = File.expand_path("..", Dir.pwd)
+        cmd   = "node #{path}/middleman-image-generator/lib/middleman-image-generator/resizer.js #{queue}"
 
-        #cmd = "node #{path}/middleman-image-generator/lib/middleman-image-generator/resizer.js #{tmp_filename}"
-        cmd = "node /home/user/Documents/webdev/staticgenerators/middleman/middleman-image-generator/lib/middleman-image-generator/resizer.js #{batch}"
-        Dir.chdir(Dir.home){
-          #%x[cmd]
-          %x[`node /home/user/Documents/webdev/staticgenerators/middleman/middleman-image-generator/lib/middleman-image-generator/resizer.js /home/user/Documents/webdev/staticgenerators/middleman/olivialennon/source/assets/images/tmp/batch1428931948.json`]
-          #IO.popen(`node #{path}/middleman-image-generator/lib/middleman-image-generator/resizer.js`)
-          #IO.popen(cmd)
-        }
+        # Wait until the file exists
+        until File.exists?(queue)
+          sleep 1
+        end
 
-        # TODO delete tmp_file after completion
+        %x[`#{cmd}`]
+
+        # Delete tmp_file after completion
+        File.delete(queue)
       end
 
       def manufacture_dzi(input_path, input_filename, output_dir)
-        ensure_enlargements_dir_exists(output_dir)
+        ensure_dir_exists(output_dir)
 
         # Append filename to output_dir
         output_path = File.join(output_dir, input_filename)
@@ -260,46 +292,3 @@ module Middleman
     end
   end
 end
-
-# Method taken from middleman-imageoptim by which images
-# in sprockets load path were added to the sitemap.
-# I am trying to push only the newly generated versions
-# to the sitemap. Will this work?
-# def manipulate_resource_list(resources)
-#   return resources unless options.manifest
-#
-#   Middleman::ImageGenerator::ResourceList.manipulate(app, resources, options)
-# end
-
-# Add filename in/output paths to parameters hash
-#def versions(versions, input_path, input_basename, output_path, output_basename)
-#   versions.each do |version, parameters|
-#     parameters[:input]     = {basename: input_basename,
-#                               path: input_path}
-#
-#     parameters[:output]    = {basename: "#{output_basename}_#{version}",
-#                               path: File.join(output_path, "#{output_basename}_#{version}")}
-#   end
-# end
-
-#         output_versions.each do |version, parameters|
-#           input_path = "#{parameters[:input_path]}"
-#           output_path = "#{parameters[:output_path]}"
-#
-#           input_ext = File.extname(input_path)
-#           input_basename = File.basename(input_path, input_ext)
-#           input_dir = File.dirname(input_path)
-#
-#           # JPEG versions
-#           # WEBP versions, add xmp with google's webpmux see http://www.webmproject.org/code/
-#           IO.popen(
-#             %{vipsthumbnail #{input_path} --size #{parameters[:dimensions]}x1000 --interpolator nohalo --delete #{parameters[:options]} -o #{output_path}.jpg[#{parameters[:quality]},strip,optimize_coding]
-#
-# exiftool -tagsfromfile #{File.join(input_dir, input_basename)}.xmp -all:all -overwrite_original #{output_path}.jpg
-#
-# vipsthumbnail #{input_path} --size #{parameters[:dimensions]} --interpolator nohalo --delete #{parameters[:options]} -o #{output_path}.webp[#{parameters[:quality]},strip]
-#
-# webpmux -set xmp #{File.join(input_dir, input_basename)}.xmp #{output_path}.webp -o #{output_path}.webp}).read
-#
-#           new_resource(@app.sitemap, output_path, output_path)
-#         end

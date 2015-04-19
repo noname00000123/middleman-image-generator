@@ -13,7 +13,7 @@ module Middleman
         # An array of directories containing source images
         sources: ["**"],
         # Define version parameters and settings to control quality of output
-        versions: {
+        display_types: {
           sml: {quality: 'Q=80', dims: '500'},
           med: {quality: 'Q=80', dims: '750'},
           lrg: {quality: 'Q=100', dims: '1000'}
