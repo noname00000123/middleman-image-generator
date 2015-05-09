@@ -38,7 +38,7 @@ module Middleman
       # Combine new_files with current state
       # TODO Would rather append than rewrite the entire file
       def build(resources)
-        current = YAML.load_file(path)
+        current = [] || YAML.load_file(path)
 
         resources.each do |resource|
           item = {}

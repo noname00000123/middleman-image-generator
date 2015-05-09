@@ -34,24 +34,29 @@ module Middleman
 
       # Collect source files, if active and unprocessed we will prepare batch paramaters
       def select_unprocessed
+        # Build 'processed' array from manifest
         processed = read_manifest.to_a
 
         @content_types.each do |type|
-          new_files = collect_specific(type).reject{|file| processed.any?{|item| item['path'].to_s == file.to_s && item['modified'].to_s == File.mtime(file).to_s}}
-          new_files.each do |file|
-            input_basename = File.basename(file, File.extname(file))
-            @new_files << {content_type: type, path: file, basename: input_basename}
+          #new_files = collect_specific(type).reject{|file| processed.any?{|item| item['path'].to_s == file.to_s && item['modified'].to_s == File.mtime(file).to_s}}
+
+          new_files = options.assets
+            .select{|asset| asset[:type] == type}
+            .reject{|asset| processed.any?{|item| item['path'].to_s == File.expand_path(asset[:input_path]) && item['modified'].to_s == File.mtime(File.expand_path(asset[:input_path])).to_s}}
+
+          new_files.each do |asset|
+            @new_files << {content_type: asset[:type], path: File.expand_path(asset[:input_path]), basename: asset[:id].to_s}
           end
         end
+
+        @new_files
       end
 
       def prepare_batch_paramaters
         # Clear previous iteration of array
         @batch_parameters = []
 
-        select_unprocessed
-
-        @new_files.each do |file|
+        select_unprocessed.each do |file|
           type            = file[:content_type]
           input_path      = file[:path]
           input_basename  = file[:basename]
@@ -59,11 +64,7 @@ module Middleman
 
           ensure_dir_exists(output_path)
 
-          if output_prefix(type).length > 1
-            output_basename = output_prefix(type).select{|item| item[:id].to_i == input_basename.to_i}.first[:title]
-          else
-            output_basename = output_prefix(type)[0][:title]
-          end
+          output_basename = options.assets.select{|item| item[:type] == type && item[:id].to_i == input_basename.to_i}.first[:output_prepend]
 
           options.display_types.each_with_index do |display_type, index|
             # $display_type = display_type.keys[0].to_s
@@ -100,13 +101,13 @@ module Middleman
           manufacture(queue)
 
           # Generate enlargements when required
-          options.sources.select{|item| item[:enlargements].present?}.each do |item|
+          options.sources.select{|source| source[:enlargements].present?}.each do |source|
             @new_files.each do |file|
-              if file[:content_type].to_s == item[:type].to_s
+              if file[:content_type].to_s == source[:type].to_s
                 input_path      = file[:path]
                 input_basename  = file[:basename]
 
-                manufacture_dzi(input_path, input_basename, File.expand_path(item[:enlargements][:path]))
+                manufacture_dzi(input_path, input_basename, File.expand_path(source[:enlargements][:path]))
               end
             end
           end
@@ -126,10 +127,22 @@ module Middleman
         Dir[glob_rule]
       end
 
+      # TODO without all items in the assets array, process_batch_parameters would be presented a file with no corresponding output_prepend etc.
       # Collect assets found in a specific directory
       def collect_specific(dir=str)
         # TODO ensure user is aware of naming convention, filename must be numeric
-        glob_rule = "#{@images_dir}/#{dir == 'secondary_items' ? 'secondary_items/{demonstrations,details,invites,studies}' : dir}/**/[0-9]*.{#{options.filetypes.join(',')}}"
+        case dir
+          when 'details'
+            glob_rule = "#{@images_dir}/secondary_items/details/**/[0-9]*.{#{options.filetypes.join(',')}}"
+          when 'demonstrations'
+            glob_rule = "#{@images_dir}/secondary_items/demonstrations/**/[0-9]*.{#{options.filetypes.join(',')}}"
+          when 'studies'
+            glob_rule = "#{@images_dir}/secondary_items/studies/**/[0-9]*.{#{options.filetypes.join(',')}}"
+          when 'invites'
+            glob_rule = "#{@images_dir}/secondary_items/invites/**/[0-9]*.{#{options.filetypes.join(',')}}"
+          else
+            glob_rule = "#{@images_dir}/#{dir}/**/[0-9]*.{#{options.filetypes.join(',')}}"
+        end
 
         Dir[glob_rule]
       end
@@ -141,10 +154,10 @@ module Middleman
         options ||= File.join(File.dirname(input_path), 'reversioned')
       end
 
-      # Collect pre-generated filenames for association with corresponding images
-      def output_prefix(type)
-        options.sources.select{|item| item[:type] == type}.first[:filenames]
-      end
+      # # Collect pre-generated filenames for association with corresponding images
+      # def output_prefixes
+      #
+      # end
 
       # Ensure there is a directory to receive versions
       def ensure_dir_exists(output_dir)
@@ -249,11 +262,19 @@ module Middleman
       def manufacture_dzi(input_path, input_filename, output_dir)
         ensure_dir_exists(output_dir)
 
-        # Append filename to output_dir
-        output_path = File.join(output_dir, input_filename)
-
+        # TODO rewrite for sharp
         # TODO Determine appropriate quality setting, 90 reduces size by roughly two thirds.
-        IO.popen("vips dzsave #{input_path} #{output_path} --suffix .jpg[Q=90] --depth onetile --strip")
+        # TODO openseadragon didn't like the reduced format
+        # IO.popen("vips dzsave #{input_path} #{output_path} --suffix .jpg[Q=90] --depth onetile --strip")
+        # webp not supported by OpenSeadragon
+        # IO.popen("vips dzsave #{input_path} #{File.join(output_dir, 'webp', input_filename)} --suffix .webp[Q=90] --strip")
+        IO.popen("vips dzsave #{input_path} #{File.join(output_dir, 'jpg', input_filename)} --suffix .jpg[Q=90] --strip")
+
+        # cmd   = "node #{path}/middleman-image-generator/lib/middleman-image-generator/zoomifier.js #{queue}"
+        # %x[`#{cmd}`]
+
+        # Delete tmp_file after completion
+        # File.delete(queue)
       end
 
       def read_manifest

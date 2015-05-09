@@ -10,6 +10,9 @@ module Middleman
         retina_versions: true,
         # Accepted image source types
         filetypes: [:jpg, :jpeg, :png, :tiff],
+        # SEO optimised filenames to prepend to output files
+        assets: [],
+
         # An array of directories containing source images
         sources: ["**"],
         # Define version parameters and settings to control quality of output
